@@ -7,7 +7,7 @@
 
 ## Overview
 
-Purreal is a custom connection pooler designed to enhance the performance and reliability of SurrealDB interactions within Python applications. It provides robust connection management with built-in SSL/TLS support, ensuring secure and efficient communication with your SurrealDB database. This library addresses the need for persistent and secure connections, reducing latency and improving overall application responsiveness.
+Purreal is a custom connection pooler designed to enhance the performance and reliability of SurrealDB interactions within Python applications. It provides robust connection pooling with built-in SSL/TLS support, ensuring secure and efficient communication with your SurrealDB database. This library addresses the need for persistent and secure connections, reducing latency and improving overall application responsiveness.
 
 ## Key Features
 
@@ -69,8 +69,8 @@ if name == "__main__":
 
 ### Explanation
 
-1.  **Import `ConnectionPool`:** Imports the necessary class from the `purreal` library.
-2.  **Create a `ConnectionPool` Instance:**  Creates a `ConnectionPool` object, configuring it with your SurrealDB connection details, including:
+1.  **Import `SurrealDBPoolManager`:** Imports the necessary class from the `purreal` library.
+2.  **Create a `SurrealDBPoolManager` Instance:**  Creates a `SurrealDBPoolManager` object, configuring it with your SurrealDB connection details, including:
     *   `uri`: The connection URI for SurrealDB.
     *   `credentials`: The username and password for authentication.
     *   `namespace`: The namespace to use.
@@ -92,7 +92,7 @@ if name == "__main__":
 
 ## API Reference
 
-### `ConnectionPool`
+### `SurrealDBPoolManager`
 
 *   `__init__(uri, credentials, namespace, database, min_size=2, max_size=10, connection_timeout=None, health_check_interval=None)`:  Initializes a new connection pool.
     *   `uri` (str): The SurrealDB connection URI.
