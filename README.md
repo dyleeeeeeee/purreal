@@ -1,6 +1,6 @@
 # Purreal: Robust SurrealDB Connection Pooling with SSL Support
 
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License](https://www.gnu.org/graphics/gplv3-with-text-136x68.png)](https://opensource.org/licenses/GNU)
 [![Python Version](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 <!-- Add CI/CD status badges here, e.g., for GitHub Actions -->
