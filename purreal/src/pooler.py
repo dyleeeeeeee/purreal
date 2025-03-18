@@ -250,7 +250,7 @@ class SurrealDBConnectionPool:
         logger.info("SurrealDB connection pool closed")
         
     @asynccontextmanager
-    async def acquire(self):
+    async def acquire(self) -> AsyncSurreal:
         """
         Acquire a connection from the pool.
         
@@ -471,6 +471,10 @@ class SurrealDBConnectionPool:
             try:
                 # Create connection with timeout
                 async with asyncio.timeout(self.connection_timeout):
+                    
+                    if attempt != 1:
+                        await asyncio.sleep(1) # Wait for 1 second before creating connection if not first attempt
+
                     db = AsyncSurreal(self.uri)
                     
                     # Sign in
@@ -540,7 +544,7 @@ class SurrealDBConnectionPool:
                 return True
                 
             # Simple health check query
-            await conn.connection.query("SELECT 1")
+            await conn.connection.query("INFO FOR DB;")
             conn.health_status = "healthy"
             return True
         except Exception as e:
