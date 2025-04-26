@@ -43,15 +43,20 @@ import asyncio
 import logging
 import time
 import random
+
+from typing import AsyncGenerator
 from typing import Dict, List, Optional, Callable, Any, Set, Union
 from contextlib import asynccontextmanager
+from surrealdb.connections.async_template import AsyncTemplate
 from surrealdb import AsyncSurreal
+from surrealdb import AsyncWsSurrealConnection, AsyncHttpSurrealConnection
+
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
 @dataclass
-class PooledConnection:
+class PooledConnection(AsyncTemplate):
     """
     Represents a connection in the pool with metadata.
     
@@ -64,7 +69,7 @@ class PooledConnection:
         id: Unique identifier for this connection
         health_status: Current health status of the connection
     """
-    connection: AsyncSurreal
+    connection: AsyncWsSurrealConnection | AsyncHttpSurrealConnection
     created_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
     in_use: bool = False
@@ -110,7 +115,7 @@ class SurrealDBConnectionPool:
         connection_retry_attempts: int = 3,
         connection_retry_delay: float = 1.0,
         schema_file: Optional[str] = None,
-        on_connection_create: Optional[Callable[[AsyncSurreal], Any]] = None,
+        on_connection_create: Optional[Callable[[AsyncWsSurrealConnection | AsyncHttpSurrealConnection], Any]] = None,
         reset_on_return: bool = True,
         log_queries: bool = False,
     ):
@@ -250,60 +255,28 @@ class SurrealDBConnectionPool:
         logger.info("SurrealDB connection pool closed")
         
     @asynccontextmanager
-    async def acquire(self) -> AsyncSurreal:
+    async def acquire(self) -> AsyncGenerator[PooledConnection, None]:
         """
         Acquire a connection from the pool.
-        
+
         This is an async context manager that acquires a connection, yields it,
         and automatically releases it when the context exits.
-        
+
         Returns:
-            AsyncSurreal: A SurrealDB connection
-            
+            AsyncGenerator[AsyncTemplate, None]: A SurrealDB connection
+
         Raises:
             TimeoutError: If unable to acquire a connection within the timeout
             RuntimeError: If the pool is closed
-        
-        Example:
-            async with pool.acquire() as conn:
-                result = await conn.query("SELECT * FROM users")
         """
         if self._closed:
             raise RuntimeError("Connection pool is closed")
-            
-        connection = None
-        acquisition_task = None
-        
+
+        conn = await self._acquire_connection()  # Assuming this returns an AsyncTemplate
         try:
-            # Create a task for this acquisition and track it
-            acquisition_task = asyncio.current_task()
-            self._active_acquisitions.add(acquisition_task)
-            
-            # Update peak concurrent users stat
-            concurrent_users = len(self._active_acquisitions)
-            if concurrent_users > self._stats["peak_concurrent_users"]:
-                self._stats["peak_concurrent_users"] = concurrent_users
-            
-            # Try to acquire a connection with timeout
-            try:
-                async with asyncio.timeout(self.acquisition_timeout):
-                    connection = await self._acquire_connection()
-                    self._stats["total_acquisitions"] += 1
-            except asyncio.TimeoutError:
-                self._stats["acquisition_timeouts"] += 1
-                raise TimeoutError(f"Timed out waiting for a connection after {self.acquisition_timeout} seconds")
-                
-            # Yield the raw AsyncSurreal connection to the user
-            yield connection.connection
-            
+            yield conn
         finally:
-            # Remove this task from active acquisitions
-            if acquisition_task:
-                self._active_acquisitions.discard(acquisition_task)
-                
-            # Release the connection back to the pool
-            if connection:
-                await self._release_connection(connection)
+            await self._release_connection(conn)  # Ensure the connection is released
     
     async def execute_query(self, query: str, params: Optional[Dict] = None):
         """
@@ -322,6 +295,7 @@ class SurrealDBConnectionPool:
         Example:
             users = await pool.execute_query("SELECT * FROM users WHERE age > $age", {"age": 18})
         """
+        start_time : int | Any = Any
         if self.log_queries:
             start_time = time.time()
             
@@ -338,7 +312,7 @@ class SurrealDBConnectionPool:
                 logger.error(f"Query execution error: {e}, Query: {query[:100]}{'...' if len(query) > 100 else ''}")
                 raise
     
-    async def get_stats(self):
+    async def get_stats(self) -> Dict[str, Any]:
         """
         Get current pool statistics.
         
@@ -395,7 +369,8 @@ class SurrealDBConnectionPool:
             # Wait outside the lock
             try:
                 await waiter
-            except Exception:
+            except Exception as e:
+                logger.error(f"Error while waiting for a connection: {e}")
                 # If the waiter was cancelled or errored, remove it from the list
                 async with self._lock:
                     if waiter in self._connection_waiters:
@@ -465,7 +440,7 @@ class SurrealDBConnectionPool:
         Raises:
             Exception: If connection creation fails after all retry attempts
         """
-        last_error = None
+        last_error = BaseException()
         
         for attempt in range(1, self.connection_retry_attempts + 1):
             try:
@@ -507,7 +482,7 @@ class SurrealDBConnectionPool:
         logger.error(f"Failed to create connection after {self.connection_retry_attempts} attempts: {last_error}")
         raise last_error
     
-    async def _execute_schema(self, db: AsyncSurreal):
+    async def _execute_schema(self, db: AsyncWsSurrealConnection | AsyncHttpSurrealConnection):
         """
         Execute schema file on a connection.
         
