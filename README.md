@@ -28,42 +28,95 @@ pip install purreal
 ### Basic Example
 
 ```python
-from purreal import SurrealDBPoolManager
-
+from purreal import SurrealDBPoolManager, SurrealDBConnectionPool
+import asyncio
+import random
 # Initialize the pool manager
 pool_manager = SurrealDBPoolManager()
+import logging
 
-def main():
-    # Create a connection pool
-    pool = await pool_manager.create_pool(
-        name="my_pool",
-        uri=SURREAL_URI,
-        credentials={"username": SURREAL_USER, "password": SURREAL_PASS},
-        namespace=NAMESPACE,
-        database=DATABASE,
-        min_connections=2,
-        max_connections=10,
-        max_idle_time=300,
-        connection_timeout=5.0,
-        acquisition_timeout=10.0,
-        health_check_interval=30,
-        max_usage_count=1000,
-        connection_retry_attempts=3,
-        connection_retry_delay=1.0,
-        schema_file=SCHEMA_FILE,
-        reset_on_return=True,
-        log_queries=True,
-    )
+# --- Example Usage (for testing/demonstration) ---
 
-    async with pool.connection() as conn:
-        # Perform SurrealDB operations using the connection
-        result = await conn.query("SELECT * FROM your_table;")
-        print(result)
+async def example_usage():
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+    logger = logging.getLogger(__name__)
 
-    await pool.close() # Close all connections in the pool when done
+    pool_config = {
+        "uri": "wss://test-prod-insta-06amo5vohhuqn9u9qa1lbl9rcg.aws-use1.surreal.cloud", # Adjust URI if needed
+        "credentials": {"username": "root", "password": "rootrm"},
+        "namespace": "test",
+        "database": "test",
+        "min_connections": 50,
+        "max_connections": 70,
+        "acquisition_timeout": 15,
+        "log_queries": True,
+        # "schema_file": "your_schema.surql" # Optional: Create a schema file
+    }
 
-if name == "__main__":
-    asyncio.run(main())
+    # Create a dummy schema file if it doesn't exist
+    schema_path = pool_config.get("schema_file")
+    if schema_path:
+        try:
+            with open(schema_path, "w", encoding="utf-8") as f:
+                f.write("DEFINE TABLE user SCHEMAFULL;\n")
+                f.write("DEFINE FIELD name ON user TYPE string;\n")
+                f.write("DEFINE FIELD email ON user TYPE string ASSERT is::email($value);\n")
+                f.write("DEFINE INDEX userEmail ON user COLUMNS email UNIQUE;\n")
+            logger.info(f"Created dummy schema file: {schema_path}")
+        except Exception as e:
+            logger.warning(f"Could not create dummy schema file {schema_path}: {e}")
+
+
+    # Method 1: Direct Pool Instance
+    pool = SurrealDBConnectionPool(**pool_config)
+    try:
+        async with pool: # Handles initialize() and close()
+            # Test execute_query helper
+            try:
+                result = await pool.execute_query("INFO FOR DB;")
+                logger.info(f"DB Info: {result}")
+            except Exception as e:
+                 logger.error(f"Initial query failed: {e}")
+                 return # Exit if initial query fails
+
+            # Simulate concurrent usage
+            async def worker(worker_id):
+                for i in range(3):
+                    try:
+                        async with pool.acquire() as conn:
+                            user_id = f"user_{worker_id}_{i}"
+                            # Example write query
+                            await conn.query(f"CREATE {user_id} SET name = 'Worker {worker_id}', email = '{worker_id}_{i}@example.com'")
+                            logger.info(f"Worker {worker_id} created {user_id}")
+                            # Example read query
+                            data = await conn.query(f"SELECT * FROM {user_id}")
+                            logger.info(f"Worker {worker_id} read data: {data}")
+                        # Add random delay to simulate work
+                        await asyncio.sleep(random.uniform(0.1, 0.5))
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Worker {worker_id} timed out acquiring connection.")
+                    except Exception as e:
+                        logger.error(f"Worker {worker_id} encountered error: {e}", exc_info=True)
+
+            tasks = [worker(i) for i in range(15)] # More workers than max_connections
+            await asyncio.gather(*tasks)
+
+            stats = await pool.get_stats()
+            logger.info(f"Final Pool Stats: {stats}")
+
+    except Exception as e:
+        logger.error(f"Error during pool example usage: {e}", exc_info=True)
+    finally:
+        # Pool is closed by async with, but explicit close is safe too
+        await pool.close()
+
+
+if __name__ == "__main__":
+     # Make sure you have SurrealDB running locally for this example
+     try:
+        asyncio.create_task(example_usage())
+     except KeyboardInterrupt:
+          print("\nExiting...")
 ```
 
 
