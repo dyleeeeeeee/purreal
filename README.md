@@ -42,7 +42,7 @@ async def example_usage():
     logger = logging.getLogger(__name__)
 
     pool_config = {
-        "uri": "wss://test-prod-insta-06amo5vohhuqn9u9qa1lbl9rcg.aws-use1.surreal.cloud", # Adjust URI if needed
+        "uri": "wss://test-xxx.surreal.cloud", # Adjust URI if needed
         "credentials": {"username": "root", "password": "rootrm"},
         "namespace": "test",
         "database": "test",
