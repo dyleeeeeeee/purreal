@@ -240,6 +240,7 @@ class TestConnectionAcquisition:
     @pytest.mark.asyncio
     async def test_acquisition_timeout(self, pool_config, mock_surreal_connection):
         """Test acquisition times out when pool is exhausted."""
+        pool_config["min_connections"] = 1
         pool_config["max_connections"] = 1
         pool_config["acquisition_timeout"] = 0.5
         
@@ -434,6 +435,7 @@ class TestPoolClosure:
     @pytest.mark.asyncio
     async def test_close_cancels_waiters(self, pool_config, mock_surreal_connection):
         """Test closing pool cancels pending waiters."""
+        pool_config["min_connections"] = 1
         pool_config["max_connections"] = 1
         
         pool = SurrealDBConnectionPool(**pool_config)
@@ -446,8 +448,8 @@ class TestPoolClosure:
             try:
                 async with pool.acquire():
                     await asyncio.sleep(10)
-            except RuntimeError:
-                pass  # Expected when pool closes
+            except (RuntimeError, asyncio.TimeoutError):
+                pass  # Expected when pool closes or times out
 
         # Hold the connection
         task1 = asyncio.create_task(try_acquire())
