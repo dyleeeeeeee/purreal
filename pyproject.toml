@@ -11,6 +11,10 @@ authors = [
 description = "A Connection Pooler for SurrealDB"
 readme = "README.md"
 requires-python = ">=3.11"
+dependencies = [
+    "surrealdb>=0.3.0",
+    "asyncio",
+]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
@@ -25,3 +29,63 @@ license-files = ["LICEN[CS]E*"]
 [project.urls]
 Homepage = "https://github.com/dyleeeeeeee/purreal"
 Issues = "https://github.com/dyleeeeeeee/purreal/issues"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-mock>=3.12.0",
+    "pytest-cov>=4.1.0",
+    "pytest-timeout>=2.2.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-mock>=3.12.0",
+    "pytest-cov>=4.1.0",
+    "pytest-timeout>=2.2.0",
+    "black>=24.0.0",
+    "mypy>=1.8.0",
+    "ruff>=0.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+    "--asyncio-mode=auto",
+    "--cov=purreal",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-branch",
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "slow: Slow-running tests",
+    "performance: Performance tests",
+]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["purreal"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
