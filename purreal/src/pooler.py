@@ -30,10 +30,11 @@ import time
 import random
 import traceback
 import uuid
-import os # For Process ID
+import os
+from collections import deque
 
 from surrealdb import AsyncSurreal, AsyncWsSurrealConnection, AsyncHttpSurrealConnection
-from typing import Dict, List, Optional, Callable, Any, Set, Union, AsyncGenerator
+from typing import Dict, List, Optional, Callable, Any, Deque, Union, AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
@@ -148,7 +149,7 @@ class SurrealDBConnectionPool:
         self._initialized = False
         self._closed = False
         self._maintenance_task: Optional[asyncio.Task] = None
-        self._connection_waiters: List[asyncio.Future] = []
+        self._connection_waiters: Deque[asyncio.Future] = deque()  # O(1) popleft vs O(n) pop(0)
 
         # Basic stats tracking
         self._stats = {
@@ -535,7 +536,7 @@ class SurrealDBConnectionPool:
             # Notify one waiter if any exist *after* pool state is updated
             if self._connection_waiters:
                  logger.debug(f"POOL DEBUG: Task {task_name} notifying waiter after releasing/closing {conn_id_str}.")
-                 waiter_to_notify = self._connection_waiters.pop(0)
+                 waiter_to_notify = self._connection_waiters.popleft()  # O(1) operation
                  if not waiter_to_notify.done():
                       waiter_to_notify.set_result(None) # Wake up the waiter
 
@@ -826,7 +827,7 @@ class SurrealDBConnectionPool:
               # Check if we should wake a waiter (maybe someone is waiting because pool was *empty*)
               if self._connection_waiters:
                   logger.debug(f"POOL DEBUG: Task {task_name} notifying waiter after replenish add.")
-                  waiter_to_notify = self._connection_waiters.pop(0)
+                  waiter_to_notify = self._connection_waiters.popleft()  # O(1) operation
                   if not waiter_to_notify.done():
                       waiter_to_notify.set_result(None)
 
