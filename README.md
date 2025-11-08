@@ -1,4 +1,33 @@
-# Purreal: Production-Grade SurrealDB Connection Pooling
+# Purreal
+
+## Quick Test (After Git Pull)
+
+```bash
+# 1. Start SurrealDB
+surreal start --bind 0.0.0.0:8000 --user root --pass root
+
+# 2. Install purreal
+pip install -e .
+
+# 3. Test connectivity (takes 5 seconds)
+python tests/test_connectivity.py
+
+# 4. Test 500 concurrent connections (optional)
+python tests/stress_test_simple.py 500
+```
+
+**Quick test runner:**
+```bash
+# Linux/Mac
+./test.sh
+
+# Windows
+test.bat
+```
+
+See [QUICKSTART.md](QUICKSTART.md) for full setup guide.
+
+## Production-Grade SurrealDB Connection Pooling
 
 [![License](https://www.gnu.org/graphics/gplv3-with-text-136x68.png)](https://opensource.org/licenses/GNU)
 [![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
