@@ -39,19 +39,25 @@ test_connectivity() {
 # Stress test
 test_stress() {
     echo -e "${YELLOW}Running stress test (500 connections)...${NC}\n"
-    python tests/stress_test_simple.py 500
+    python examples/stress_test.py 500
 }
 
 # Monitor pool
 test_monitor() {
     echo -e "${YELLOW}Running monitored load test...${NC}\n"
-    python tests/monitor_pool.py
+    python examples/monitor_pool.py
 }
 
 # Benchmark configs
 test_benchmark() {
     echo -e "${YELLOW}Running configuration benchmark...${NC}\n"
-    python tests/benchmark_configs.py
+    python benchmarks/benchmark_configs.py
+}
+
+# Throughput test
+test_throughput() {
+    echo -e "${YELLOW}Running high-throughput stress test...${NC}\n"
+    python benchmarks/high_throughput.py
 }
 
 # Full load test
@@ -61,7 +67,7 @@ test_load() {
     read -p "Continue? (y/n) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        python tests/load_test_pool.py
+        python examples/load_test.py
     fi
 }
 
@@ -83,6 +89,9 @@ case $TEST_TYPE in
     benchmark|bench)
         test_benchmark
         ;;
+    throughput|high)
+        test_throughput
+        ;;
     load)
         test_load
         ;;
@@ -94,13 +103,14 @@ case $TEST_TYPE in
         test_monitor
         ;;
     *)
-        echo "Usage: $0 [connectivity|stress|monitor|benchmark|load|all]"
+        echo "Usage: $0 [connectivity|stress|monitor|benchmark|throughput|load|all]"
         echo ""
         echo "Tests:"
         echo "  connectivity  - Test basic connectivity (default)"
         echo "  stress        - Test 500 concurrent connections"
         echo "  monitor       - Monitor pool behavior in real-time"
         echo "  benchmark     - Benchmark different configurations"
+        echo "  throughput    - High-throughput stress test (sustained load, bursts, churn)"
         echo "  load          - Comprehensive load test (slow)"
         echo "  all           - Run connectivity, stress, and monitor tests"
         exit 1

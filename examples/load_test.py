@@ -16,7 +16,7 @@ from typing import List, Dict
 from dataclasses import dataclass, field
 import logging
 
-from purreal.src.pooler import SurrealDBConnectionPool
+from purreal.pooler import SurrealDBConnectionPool
 
 logging.basicConfig(
     level=logging.INFO,

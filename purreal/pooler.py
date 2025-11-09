@@ -486,23 +486,13 @@ class SurrealDBConnectionPool:
                 close_reason = f"max usage ({self.max_usage_count}) reached"
 
         # Try resetting state if required and not closing yet
+        # NOTE: Calling .use() on already-configured connections can hang in some SurrealDB client versions
+        # Skip reset as connections are already configured during creation and don't change ns/db
         if not should_close and self.reset_on_return:
-            logger.debug(f"POOL DEBUG: Task {task_name} attempting reset for conn {conn_id_str}")
-            try:
-                # Use a timeout for the reset operation itself
-                async with asyncio.timeout(5.0):
-                    await pooled_conn.connection.use(self.namespace, self.database)
-                logger.debug(f"POOL DEBUG: Task {task_name} reset successful for conn {conn_id_str}")
-            except asyncio.TimeoutError:
-                 logger.warning(f"Timeout resetting conn {conn_id_str}. Marking unhealthy.")
-                 pooled_conn.health_status = "unhealthy" # Mark flag
-                 should_close = True
-                 close_reason = "reset timeout"
-            except Exception as e:
-                logger.warning(f"Failed to reset conn {conn_id_str}: {e}. Marking unhealthy.")
-                pooled_conn.health_status = "unhealthy" # Mark flag
-                should_close = True
-                close_reason = "reset failed"
+            logger.debug(f"POOL DEBUG: Task {task_name} skipping reset for conn {conn_id_str} (connections maintain ns/db state)")
+            # Connection state is maintained - no reset needed
+            # If future use cases require different ns/db per query, implement connection state tracking
+            pass
 
         # --- Update pool state (under lock) ---
         async with self._lock:

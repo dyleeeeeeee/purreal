@@ -380,13 +380,46 @@ async def monitor_pool(pool):
 asyncio.create_task(monitor_pool(pool))
 ```
 
+## Known Limitations
+
+### Burst Load > max_connections
+
+**Issue:** When burst traffic exceeds `max_connections`, waiting tasks may timeout instead of queuing properly.
+
+**Example:**
+- Pool: `max_connections=50`
+- Burst: 100 concurrent requests
+- Result: 50 succeed, 50 timeout (instead of queuing)
+
+**Workaround:**
+```python
+# Size pool for peak burst load
+pool = SurrealDBConnectionPool(
+    max_connections=150,  # 1.5x expected peak
+    ...
+)
+
+# Or use semaphore to limit concurrency
+semaphore = asyncio.Semaphore(50)
+
+async def limited_query():
+    async with semaphore:
+        async with pool.acquire() as conn:
+            await conn.query(...)
+```
+
+**Status:** Known issue in v0.1.0. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for details.
+
+**Impact:** Sustained load and gradual ramp-up work fine. Only affects sudden bursts >> pool size.
+
 ## Contributing
 
-Contributions are welcome! Please follow these steps:
+We welcome contributions! Please feel free to submit a Pull Request.
 
+### Guidelines
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes following the project's coding style (Black, type hints)
+3. Make your changes
 4. Write tests for your changes (`pytest tests/`)
 5. Ensure all tests pass (`pytest`)
 6. Submit a pull request

@@ -8,7 +8,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 from typing import Optional
-from purreal.src.pooler import SurrealDBConnectionPool
+from purreal.pooler import SurrealDBConnectionPool
 
 
 @dataclass

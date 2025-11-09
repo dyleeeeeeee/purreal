@@ -4,23 +4,37 @@ build-backend = "hatchling.build"
 
 [project]
 name = "purreal"
-version = "0.1a7"
+version = "0.1.0"
 authors = [
   { name="Dylee", email="calistaff33@proton.me" },
 ]
-description = "A Connection Pooler for SurrealDB"
+description = "Production-grade async connection pooler for SurrealDB"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "surrealdb>=0.3.0",
     "asyncio",
 ]
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "Operating System :: OS Independent",
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
-    "Development Status :: 3 - Alpha",
+keywords = [
+    "surrealdb",
+    "connection-pool",
+    "async",
+    "database",
+    "pooling",
+    "concurrency",
+]
 
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Framework :: AsyncIO",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
 license = "GPL-3.0"

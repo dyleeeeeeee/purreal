@@ -6,7 +6,7 @@ Run this first to validate your pool can handle target concurrency.
 
 import asyncio
 import time
-from purreal.src.pooler import SurrealDBConnectionPool
+from purreal.pooler import SurrealDBConnectionPool
 
 
 async def quick_stress_test(

@@ -11,7 +11,7 @@ from typing import Dict, Any
 from unittest.mock import AsyncMock, MagicMock, patch, call
 from collections import deque
 
-from purreal.src.pooler import (
+from purreal.pooler import (
     SurrealDBConnectionPool,
     PooledConnection,
     SurrealDBPoolManager,
@@ -38,7 +38,7 @@ def pool_config():
     """Standard pool configuration for testing."""
     return {
         "uri": "ws://localhost:8000/rpc",
-        "credentials": {"user": "root", "pass": "root"},
+        "credentials": {"username": "root", "password": "root"},
         "namespace": "test",
         "database": "test",
         "min_connections": 2,
@@ -291,12 +291,13 @@ class TestConnectionRelease:
 
     @pytest.mark.asyncio
     async def test_connection_reset_on_release(self, mock_pool, mock_surreal_connection):
-        """Test connection is reset when returned to pool."""
+        """Test connection reset is skipped (workaround for blocking .use() issue)."""
         async with mock_pool.acquire() as conn:
             pass  # Just acquire and release
 
-        # Verify use() was called for reset
-        mock_surreal_connection.use.assert_called()
+        # Verify use() was NOT called (reset disabled to prevent deadlock)
+        # TODO: Re-enable when .use() blocking issue is fixed
+        mock_surreal_connection.use.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_unhealthy_connection_closed(self, mock_pool):
