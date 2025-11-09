@@ -636,16 +636,23 @@ class SurrealDBConnectionPool:
 
     async def _check_connection_health(self, conn_wrapper: PooledConnection) -> bool:
         """Performs a quick health check on an idle connection."""
-        # Implementation reviewed, looks okay. Checks run outside main lock.
-        # Logging includes connection ID and object ID.
-        # Only checks connections not currently marked 'in_use'.
-        if conn_wrapper.in_use:
-            # Should not happen if called correctly by maintenance loop, but safe check.
-            logger.debug(f"Skipping health check for in-use conn {conn_wrapper.id}")
-            return True
+        # CRITICAL FIX: Must acquire lock and verify in_use status before health check
+        # to prevent race condition where connection gets acquired between check and query
+        
+        # First, try to "acquire" the connection for health check under lock
+        async with self._lock:
+            if conn_wrapper.in_use:
+                # Connection was acquired by a request between maintenance gathering and now
+                logger.debug(f"Skipping health check for in-use conn {conn_wrapper.id}")
+                return True
+            
+            # Temporarily mark as in_use during health check to prevent concurrent access
+            conn_wrapper.in_use = True
+            logger.debug(f"Health check: Temporarily locking conn {conn_wrapper.id} (obj: {id(conn_wrapper.connection)})")
 
-        logger.debug(f"Checking health of idle conn {conn_wrapper.id} (obj: {id(conn_wrapper.connection)})")
+        # Now safe to perform health check outside lock - connection is marked in_use
         try:
+            logger.debug(f"Checking health of conn {conn_wrapper.id} (obj: {id(conn_wrapper.connection)})")
             # Use a lightweight, read-only query with a short timeout
             async with asyncio.timeout(5.0):
                 await conn_wrapper.connection.query("INFO FOR DB;")
@@ -665,6 +672,11 @@ class SurrealDBConnectionPool:
             conn_wrapper.health_status = "unhealthy" # Update the flag
             self._stats["health_check_failures"] += 1 # Increment stat
             return False
+        finally:
+            # CRITICAL: Always release the temporary lock after health check
+            async with self._lock:
+                conn_wrapper.in_use = False
+                logger.debug(f"Health check: Released temporary lock on conn {conn_wrapper.id}")
 
     async def _maintenance_loop(self):
         """Background task for periodic pool maintenance."""
