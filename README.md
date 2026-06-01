@@ -1,74 +1,41 @@
 # Purreal
 
-## Quick Test (After Git Pull)
+**Adaptive async connection pooler and session multiplexer for SurrealDB.**
 
-```bash
-# 1. Start SurrealDB
-surreal start --bind 0.0.0.0:8000 --user root --pass root
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Tests](https://github.com/dyleeeeeeee/purreal/actions/workflows/test.yml/badge.svg)](https://github.com/dyleeeeeeee/purreal/actions)
 
-# 2. Install purreal
-pip install -e .
+---
 
-# 3. Test connectivity (takes 5 seconds)
-python tests/test_connectivity.py
+## What It Does
 
-# 4. Test 500 concurrent connections (optional)
-python tests/stress_test_simple.py 500
+Purreal solves the `websockets.exceptions.ConcurrencyError` that crashes SurrealDB Python apps under concurrent load. It goes further: predictive pre-warming, self-tuning pool size, session multiplexing across physical connections, and transparent failover (session teleportation) when connections die.
+
+```python
+import asyncio
+from purreal import SurrealDBConnectionPool, SessionMultiplexer
+
+async def main():
+    async with SurrealDBConnectionPool(
+        uri="ws://localhost:8000/rpc",
+        credentials={"username": "root", "password": "root"},
+        namespace="test",
+        database="test",
+    ) as pool:
+        # Simple: exclusive connection leasing
+        async with pool.acquire() as conn:
+            result = await conn.query("SELECT * FROM users")
+
+        # Advanced: 200 virtual sessions on 3 physical connections
+        async with SessionMultiplexer(pool, num_slots=3) as mux:
+            session = await mux.get_session("app", "prod", {"username": "root", "password": "root"})
+            users = await session.query("SELECT * FROM users")
+
+asyncio.run(main())
 ```
 
-**Quick test runner:**
-```bash
-# Linux/Mac
-./test.sh
-
-# Windows
-test.bat
-```
-
-See [QUICKSTART.md](QUICKSTART.md) for full setup guide.
-
-## Production-Grade SurrealDB Connection Pooling
-
-[![License](https://www.gnu.org/graphics/gplv3-with-text-136x68.png)](https://opensource.org/licenses/GNU)
-[![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-
-## Overview
-
-Purreal is a **production-grade async connection pooler** for SurrealDB that solves the critical `websockets.exceptions.ConcurrencyError: cannot call recv while another coro is calling recv` issue in high-concurrency Python applications.
-
-By ensuring **exclusive connection leasing** and sophisticated **connection lifecycle management**, Purreal enables your async applications to safely handle thousands of concurrent database operations without race conditions or connection conflicts.
-
-## Why Purreal?
-
-**The Problem:** SurrealDB's Python client connections cannot safely handle concurrent operations from multiple coroutines. Attempting to share a single connection results in `ConcurrencyError` crashes.
-
-**The Solution:** Purreal provides:
-- **Exclusive connection leasing** - each coroutine gets its own connection
-- **Automatic pool management** - connections created/destroyed based on demand
-- **Robust error handling** - connections auto-replaced on failure
-- **Production-ready** - battle-tested with comprehensive logging and stats
-
-## Key Features
-
-### Core Pooling
-*   **Exclusive Connection Leasing:** Prevents `ConcurrencyError` by ensuring only one coroutine uses a connection at a time
-*   **Dynamic Pool Sizing:** Auto-scales between `min_connections` and `max_connections` based on load
-*   **Connection Queueing:** Fair FIFO queue when pool exhausted, with configurable timeout
-*   **Async Context Manager:** Safe `async with` pattern guarantees connection return
-
-### Reliability & Health
-*   **Automatic Health Checks:** Background maintenance loop validates connection health
-*   **Connection Lifecycle Management:** Tracks usage count, age, and health status
-*   **Intelligent Retry Logic:** Exponential backoff with jitter for transient failures
-*   **Graceful Degradation:** Continues operating even when some connections fail
-
-### Production Features
-*   **Connection State Reset:** Optional `reset_on_return` to clear session state
-*   **Schema Initialization:** Auto-execute `.surql` schema files on connection creation
-*   **Comprehensive Stats:** Track acquisitions, timeouts, errors, peak usage
-*   **Detailed Logging:** Debug-level connection lifecycle tracing
-*   **Query Logging:** Optional request/response logging for debugging
+---
 
 ## Installation
 
@@ -76,368 +43,510 @@ By ensuring **exclusive connection leasing** and sophisticated **connection life
 pip install purreal
 ```
 
-**Requirements:**
-- Python 3.11+
-- surrealdb >= 0.3.0
+Requires Python 3.11+ and `surrealdb >= 0.3.0`.
 
+---
 
-## Quick Start
+## Architecture
 
-### Basic Usage
-
-```python
-import asyncio
-from purreal import SurrealDBConnectionPool
-
-async def main():
-    # Initialize pool
-    pool = SurrealDBConnectionPool(
-        uri="ws://localhost:8000/rpc",
-        credentials={"username": "root", "password": "root"},
-        namespace="test",
-        database="test",
-        min_connections=5,
-        max_connections=20,
-    )
-    
-    # Use async context manager (handles init + cleanup)
-    async with pool:
-        # Acquire exclusive connection
-        async with pool.acquire() as conn:
-            result = await conn.query("SELECT * FROM users")
-            print(result)
-
-asyncio.run(main())
+```
+User Code
+    │
+    ▼
+SessionMultiplexer ──► VirtualSession.query(...)
+    │
+    │  SessionRouter (state-affinity scoring)
+    ▼
+PhysicalSlot [0..N] ──► drain loop (serial execution per slot)
+    │
+    ▼
+SurrealDBConnectionPool ──► Semaphore + LifoQueue, O(1) acquire
+    │
+    │  DemandPredictor ─── pre-warms before spikes
+    │  LatencyOracle ───── detects degraded connections
+    │  AdaptiveScaler ──── self-tunes pool size
+    │  CircuitBreaker ──── isolates failing connections
+    ▼
+SurrealDB Server (WebSocket)
 ```
 
-### Production Example with Error Handling
+---
 
-```python
-import asyncio
-import logging
-from purreal import SurrealDBConnectionPool
+## Features
 
-logging.basicConfig(level=logging.INFO)
+| Feature | Description |
+|---------|-------------|
+| **Exclusive leasing** | One coroutine per connection — no ConcurrencyError |
+| **Adaptive pool sizing** | Self-tunes based on p95 acquisition latency |
+| **Predictive pre-warming** | Pre-creates connections before demand spikes |
+| **Session multiplexing** | M virtual sessions on N physical connections |
+| **Session teleportation** | Transparent retry on connection failure |
+| **Proactive migration** | Moves sessions off expiring connections before they die |
+| **Circuit breakers** | Isolates failing connections, auto-recovers |
+| **Latency oracle** | 3σ outlier detection for degraded connections |
+| **Overflow/burst** | Temporary connections for traffic spikes |
+| **Pre-ping validation** | Validates stale connections before handing out |
+| **Leak detection** | Warns with stack trace if connection held too long |
+| **Bounded waiters** | Load shedding when queue depth exceeds limit |
+| **Graceful drain** | Pause/resume/drain for zero-downtime operations |
+| **Event hooks** | Subscribe to pool lifecycle events |
+| **Max-lifetime with jitter** | Prevents thundering herd on rotation |
 
-async def process_user_batch(pool, user_ids):
-    """Process multiple users concurrently using the pool."""
-    async def process_user(user_id):
-        try:
-            async with pool.acquire() as conn:
-                # Each coroutine gets exclusive connection access
-                user = await conn.query(f"SELECT * FROM user:{user_id}")
-                await conn.query(
-                    f"UPDATE user:{user_id} SET last_accessed = time::now()"
-                )
-                return user
-        except asyncio.TimeoutError:
-            logging.warning(f"Timeout acquiring connection for user {user_id}")
-            return None
-        except Exception as e:
-            logging.error(f"Error processing user {user_id}: {e}")
-            return None
-    
-    # Process all users concurrently - pool handles queueing
-    results = await asyncio.gather(*[process_user(uid) for uid in user_ids])
-    return [r for r in results if r is not None]
-
-async def main():
-    pool = SurrealDBConnectionPool(
-        uri="wss://mydb.surreal.cloud",
-        credentials={"username": "admin", "password": "secure_pass"},
-        namespace="production",
-        database="app",
-        min_connections=10,
-        max_connections=50,
-        acquisition_timeout=30.0,  # Wait up to 30s for connection
-        health_check_interval=60.0,  # Check health every 60s
-        log_queries=True,  # Log all queries (disable in prod)
-        schema_file="schema.surql",  # Auto-execute on new connections
-    )
-    
-    async with pool:
-        # Simulate high-concurrency workload
-        user_ids = [f"user_{i}" for i in range(100)]
-        results = await process_user_batch(pool, user_ids)
-        
-        # Check pool stats
-        stats = await pool.get_stats()
-        logging.info(f"Pool stats: {stats}")
-
-asyncio.run(main())
-```
-
-
-## Configuration Options
-
-### Required Parameters
-- **`uri`** (str): SurrealDB connection URI (e.g., `ws://localhost:8000/rpc`, `wss://cloud.surreal.io`)
-- **`credentials`** (dict): Authentication credentials `{"username": "...", "password": "..."}`
-- **`namespace`** (str): SurrealDB namespace
-- **`database`** (str): SurrealDB database name
-
-### Pool Sizing
-- **`min_connections`** (int, default: 4): Minimum connections maintained in pool
-- **`max_connections`** (int, default: 10): Maximum connections allowed
-- **`acquisition_timeout`** (float, default: 10.0): Seconds to wait for available connection
-
-### Connection Lifecycle
-- **`max_idle_time`** (float, default: 300.0): Seconds before idle connection is recycled
-- **`max_usage_count`** (int, default: 1000): Max queries before connection recycled
-- **`connection_timeout`** (float, default: 25.0): Seconds to establish new connection
-- **`connection_retry_attempts`** (int, default: 3): Retries for failed connections
-- **`connection_retry_delay`** (float, default: 1.0): Base delay between retries (exponential backoff)
-
-### Health & Maintenance
-- **`health_check_interval`** (float, default: 30.0): Seconds between health checks
-- **`reset_on_return`** (bool, default: True): Reset connection state on release
-
-### Advanced
-- **`schema_file`** (str, optional): Path to `.surql` file to execute on new connections
-- **`on_connection_create`** (callable, optional): Async callback when connection created
-- **`log_queries`** (bool, default: False): Log all queries (useful for debugging)
-
-
+---
 
 ## API Reference
 
 ### `SurrealDBConnectionPool`
 
-#### Initialization
+The core connection pool. Manages physical WebSocket connections to SurrealDB.
+
+#### Constructor
+
 ```python
+from purreal import SurrealDBConnectionPool, PoolConfig
+
+# Option 1: Direct kwargs (backward-compatible)
 pool = SurrealDBConnectionPool(
-    uri, credentials, namespace, database,
-    min_connections=4, max_connections=10,
-    acquisition_timeout=10.0, **kwargs
+    uri="ws://localhost:8000/rpc",
+    credentials={"username": "root", "password": "root"},
+    namespace="test",
+    database="test",
+    pool_size=5,              # Steady-state connections (default: 5)
+    max_overflow=10,          # Extra connections for bursts (default: 10)
+    acquisition_timeout=5.0,  # Seconds to wait for connection (default: 5.0)
+    connection_timeout=10.0,  # Seconds to establish connection (default: 10.0)
+    max_lifetime=1800.0,      # Max connection age in seconds (default: 1800)
+    max_idle_time=300.0,      # Idle timeout in seconds (default: 300)
+    max_usage_count=10000,    # Queries before recycling (default: 10000)
+    health_check_interval=30.0,
+    pre_ping=True,            # Validate stale connections on acquire (default: True)
+    pre_ping_bypass_window=1.0,  # Skip validation if used within N seconds
+    leak_detection_threshold=60.0,  # Warn if held longer than N seconds
+    max_waiters=100,          # Reject if more than N tasks waiting
+    connection_retry_attempts=3,
+    connection_retry_delay=1.0,
+    schema_file="schema.surql",     # Execute on each new connection
+    on_connection_create=my_callback,  # Async callback on creation
+    log_queries=False,
 )
+
+# Option 2: PoolConfig object
+config = PoolConfig(
+    uri="ws://localhost:8000/rpc",
+    credentials={"username": "root", "password": "root"},
+    namespace="test",
+    database="test",
+    pool_size=10,
+    max_overflow=20,
+)
+pool = SurrealDBConnectionPool(config=config)
 ```
 
-#### Context Manager (Recommended)
+#### Lifecycle
+
 ```python
-async with pool:  # Calls initialize() and close() automatically
-    async with pool.acquire() as conn:
-        await conn.query("SELECT * FROM table")
+# Context manager (recommended)
+async with SurrealDBConnectionPool(...) as pool:
+    ...  # auto-initializes, auto-closes
+
+# Manual
+pool = SurrealDBConnectionPool(...)
+await pool.initialize()  # Create initial connections, start background tasks
+# ... use pool ...
+await pool.close()       # Graceful shutdown
 ```
 
 #### Methods
 
-**`async with acquire() -> SurrealConnection`**
-- Acquires exclusive connection from pool
-- **Must** use with `async with` to ensure proper release
-- Raises `asyncio.TimeoutError` if pool exhausted for `acquisition_timeout` seconds
-- Raises `RuntimeError` if pool closed or not initialized
+| Method | Description |
+|--------|-------------|
+| `async with pool.acquire() as conn` | Get exclusive connection. Raises `TimeoutError` or `PoolExhaustedError` |
+| `await pool.execute_query(sql, params)` | Convenience: acquire → query → release |
+| `await pool.get_stats()` | Returns dict with all pool metrics |
+| `await pool.checkout()` | Long-term lease (returns `PooledConnection`) |
+| `await pool.checkin(conn)` | Return long-term lease |
+| `pool.pause()` | Stop handing out connections (raises `PoolPausedError`) |
+| `pool.resume()` | Re-enable acquisitions |
+| `await pool.drain(timeout=30)` | Wait for in-flight, then close |
+| `await pool.initialize()` | Idempotent init |
+| `await pool.close()` | Idempotent shutdown |
 
-**`async initialize()`**
-- Creates minimum connections and starts maintenance loop
-- Safe to call multiple times (idempotent)
-- Automatically called by `async with pool`
-
-**`async close()`**
-- Gracefully closes all connections
-- Cancels maintenance loop
-- Notifies waiting coroutines
-- Safe to call multiple times
-- Automatically called by `async with pool` exit
-
-**`async get_stats() -> dict`**
-- Returns pool statistics:
-  ```python
-  {
-      "total_connections_created": int,
-      "total_connections_closed": int,
-      "total_acquisitions": int,
-      "total_releases": int,
-      "acquisition_timeouts": int,
-      "connection_errors": int,
-      "health_check_failures": int,
-      "peak_connections": int,
-      "peak_waiters": int,
-      "current_pool_size": int,
-      "current_available": int,
-      "current_in_use": int,
-      "current_waiters": int,
-  }
-  ```
-
-**`async execute_query(query: str, params: dict = None) -> Any`**
-- Convenience method: acquires connection, executes query, releases
-- Equivalent to:
-  ```python
-  async with pool.acquire() as conn:
-      return await conn.query(query, params)
-  ```
-
-## Best Practices
-
-### ✅ DO
+#### Stats
 
 ```python
-# Use async context managers for guaranteed cleanup
-async with pool:
-    async with pool.acquire() as conn:
-        await conn.query("SELECT * FROM users")
-
-# Set appropriate pool sizes for your workload
-pool = SurrealDBConnectionPool(
-    min_connections=10,  # Based on baseline load
-    max_connections=50,  # Based on peak load
-)
-
-# Handle timeouts gracefully
-try:
-    async with pool.acquire() as conn:
-        result = await conn.query("SLOW QUERY")
-except asyncio.TimeoutError:
-    logger.warning("Pool exhausted, consider scaling")
+stats = await pool.get_stats()
+# Returns:
+{
+    "total_connections_created": int,
+    "total_connections_closed": int,
+    "total_acquisitions": int,
+    "total_releases": int,
+    "acquisition_timeouts": int,
+    "connection_errors": int,
+    "health_check_failures": int,
+    "peak_connections": int,
+    "peak_waiters": int,
+    "current_connections": int,
+    "available_connections": int,
+    "in_use_connections": int,
+    "connection_waiters": int,
+    "overflow_connections": int,
+    "p50_acquire_ms": float,
+    "p95_acquire_ms": float,
+    "p99_acquire_ms": float,
+    "total_teleports": int,
+    "total_pre_warms": int,
+}
 ```
 
-### ❌ DON'T
+#### Events
 
 ```python
-# Don't share connections between coroutines
-conn = await pool.acquire()  # Missing async with!
-await asyncio.gather(
-    conn.query("SELECT 1"),  # ❌ ConcurrencyError!
-    conn.query("SELECT 2"),
-)
+from purreal import PoolEvent
 
-# Don't forget to close the pool
-pool = SurrealDBConnectionPool(...)
-await pool.initialize()
-# ... use pool ...
-# ❌ Missing: await pool.close()
+pool.events.on(PoolEvent.ACQUIRE, lambda ctx: print(f"Acquired {ctx.connection_id}"))
+pool.events.on(PoolEvent.TIMEOUT, lambda ctx: alert("Pool exhausted!"))
+pool.events.on(PoolEvent.HEALTH_FAIL, my_async_handler)
+pool.events.on(PoolEvent.PRE_WARM, lambda ctx: logger.info("Pre-warmed connection"))
+```
 
-# Don't set pool sizes too small
-pool = SurrealDBConnectionPool(
-    min_connections=1,   # ❌ Too small for production
-    max_connections=2,   # ❌ Will bottleneck quickly
+Available events: `ACQUIRE`, `RELEASE`, `CREATE`, `DESTROY`, `HEALTH_FAIL`, `TIMEOUT`, `OVERFLOW_CREATE`, `OVERFLOW_DESTROY`, `DRAIN_START`, `DRAIN_COMPLETE`, `PRE_WARM`, `SCALE_UP`, `SCALE_DOWN`, `CIRCUIT_OPEN`, `CIRCUIT_CLOSE`, `TELEPORT`
+
+---
+
+### `SessionMultiplexer`
+
+Multiplexes M virtual sessions over N physical connections with state-aware routing and transparent teleportation.
+
+#### Constructor
+
+```python
+from purreal import SessionMultiplexer
+
+mux = SessionMultiplexer(
+    pool=pool,                    # Required: the underlying connection pool
+    num_slots=3,                  # Physical connections to maintain (default: 3)
+    max_sessions=200,             # Cap on concurrent virtual sessions (default: 200)
+    session_idle_timeout=300.0,   # Reap idle sessions after N seconds (default: 300)
+    max_queue_per_slot=50,        # Max pending requests per slot (default: 50)
 )
 ```
+
+#### Lifecycle
+
+```python
+# Context manager
+async with SessionMultiplexer(pool, num_slots=3) as mux:
+    session = await mux.get_session("ns", "db", creds)
+    await session.query("SELECT * FROM users")
+
+# Manual
+mux = SessionMultiplexer(pool, num_slots=3)
+await mux.start()
+# ... use ...
+await mux.stop()
+```
+
+#### Methods
+
+| Method | Description |
+|--------|-------------|
+| `await mux.get_session(ns, db, credentials)` | Create a virtual session |
+| `await mux.get_stats()` | Returns session count and slot status |
+| `await mux.start()` | Initialize slots and background tasks |
+| `await mux.stop()` | Drain and shutdown |
+
+---
+
+### `VirtualSession`
+
+User-facing session handle. Tracks namespace, database, credentials, and variables. Not bound to any physical connection — transparently routes queries to the best available slot.
+
+#### Methods
+
+| Method | Description |
+|--------|-------------|
+| `await session.query(sql, params=None)` | Execute arbitrary SurrealQL |
+| `await session.select(thing)` | `SELECT * FROM {thing}` |
+| `await session.create(thing, data=None)` | `CREATE {thing} CONTENT ...` |
+| `await session.update(thing, data)` | `UPDATE {thing} CONTENT ...` |
+| `await session.delete(thing)` | `DELETE {thing}` |
+| `await session.let(key, value)` | Set a session variable (`LET $key = value`) |
+| `await session.close()` | Close session, free resources |
+
+#### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `session.session_id` | `str` | Unique identifier |
+| `session.namespace` | `str` | Current namespace |
+| `session.database` | `str` | Current database |
+| `session.is_active` | `bool` | True if not expired/closed |
+| `session.idle_duration` | `float` | Seconds since last activity |
+
+---
+
+### `EventBus`
+
+Lightweight pub/sub for pool lifecycle events.
+
+```python
+from purreal import EventBus, PoolEvent
+
+bus = EventBus()
+
+# Sync handler
+bus.on(PoolEvent.ACQUIRE, lambda ctx: metrics.increment("pool.acquire"))
+
+# Async handler
+async def on_timeout(ctx):
+    await alerting.send(f"Pool timeout at {ctx.timestamp}")
+bus.on(PoolEvent.TIMEOUT, on_timeout)
+
+# Remove handler
+bus.off(PoolEvent.TIMEOUT, on_timeout)
+
+# Clear all
+bus.clear()
+```
+
+Handlers never block the pool's hot path. Exceptions in handlers are logged and swallowed.
+
+---
+
+### `DemandPredictor`
+
+Predicts future connection demand from time-of-day patterns and real-time EWMA.
+
+```python
+from purreal import DemandPredictor
+
+predictor = DemandPredictor(alpha=0.3)  # EWMA smoothing factor
+predictor.record_acquisition()          # Call on each acquire
+predicted = predictor.predict_demand(horizon_seconds=10.0)  # How many conns needed
+predictor.decay(factor=0.95)            # Age historical data
+```
+
+Used internally by the pool's housekeeping loop. Exposed for custom scheduling logic.
+
+---
+
+### `LatencyOracle`
+
+Per-connection latency tracking with 3σ outlier detection.
+
+```python
+from purreal import LatencyOracle
+
+oracle = LatencyOracle()
+oracle.record("conn_abc", 5.2)          # Record RTT in ms
+oracle.is_degraded("conn_abc")          # True if 3σ outlier
+oracle.pool_p50()                       # Pool-wide p50 latency
+oracle.pool_p95()                       # Pool-wide p95 latency
+oracle.pool_p99()                       # Pool-wide p99 latency
+oracle.remove_connection("conn_abc")    # Cleanup
+```
+
+---
+
+### `CircuitBreaker`
+
+Per-connection failure isolation with automatic recovery.
+
+```python
+from purreal import CircuitBreaker
+
+cb = CircuitBreaker(threshold=5, cooldown=30.0)
+cb.record_failure()     # Increment failure count
+cb.record_success()     # Decrement / close circuit
+cb.allows_request       # True if CLOSED or HALF_OPEN
+cb.state                # CircuitState.CLOSED / OPEN / HALF_OPEN
+cb.reset()              # Force close
+```
+
+States: `CLOSED` (normal) → `OPEN` (after N failures, rejects for cooldown period) → `HALF_OPEN` (allows one request to test recovery) → `CLOSED`
+
+---
+
+### `AdaptiveScaler`
+
+Emits pool scaling decisions based on latency targets.
+
+```python
+from purreal import AdaptiveScaler
+
+scaler = AdaptiveScaler(
+    target_p95_ms=5.0,
+    low_utilization_threshold=0.3,
+    min_pool=2,
+    max_pool=50,
+    cooldown_seconds=5.0,
+)
+decision = scaler.decide(
+    current_p95_ms=8.0,
+    current_size=10,
+    idle_count=2,
+)
+# Returns: +1 (grow), -1 (shrink), or 0 (hold)
+```
+
+---
+
+### `SurrealDBPoolManager`
+
+Singleton for managing multiple named pools.
+
+```python
+from purreal import SurrealDBPoolManager
+
+manager = SurrealDBPoolManager()
+
+# Create named pools
+await manager.create_pool("primary", uri="ws://primary:8000/rpc", ...)
+await manager.create_pool("replica", uri="ws://replica:8000/rpc", ...)
+
+# Retrieve
+pool = manager.get_pool("primary")
+
+# Shutdown all
+await manager.close_all_pools()
+```
+
+---
+
+### Exceptions
+
+| Exception | When |
+|-----------|------|
+| `PoolExhaustedError` | Waiter queue at max capacity |
+| `PoolPausedError` | Pool is paused via `pool.pause()` |
+| `SessionExpiredError` | Session timed out or was closed |
+| `asyncio.TimeoutError` | Acquisition timeout exceeded |
+| `RuntimeError` | Pool closed or not initialized |
+
+---
+
+## Usage Patterns
+
+### Basic Pool Usage
+
+```python
+async with SurrealDBConnectionPool(
+    uri="ws://localhost:8000/rpc",
+    credentials={"username": "root", "password": "root"},
+    namespace="test",
+    database="test",
+) as pool:
+    async with pool.acquire() as conn:
+        await conn.query("CREATE user SET name = 'Alice'")
+```
+
+### High-Concurrency Batch Processing
+
+```python
+async def process_batch(pool, items):
+    async def process_one(item):
+        async with pool.acquire() as conn:
+            return await conn.query(f"UPDATE item:{item['id']} SET processed = true")
+
+    return await asyncio.gather(*[process_one(i) for i in items])
+```
+
+### Multi-Tenant with Session Multiplexer
+
+```python
+async with SessionMultiplexer(pool, num_slots=5, max_sessions=500) as mux:
+    # Each tenant gets isolated session (different ns/db)
+    tenant_a = await mux.get_session("tenant_a", "prod", creds)
+    tenant_b = await mux.get_session("tenant_b", "prod", creds)
+
+    # Queries route to optimal physical connections
+    await tenant_a.query("SELECT * FROM orders")
+    await tenant_b.query("SELECT * FROM orders")  # Different namespace
+```
+
+### Graceful Deployment (Zero-Downtime Drain)
+
+```python
+# On SIGTERM:
+pool.pause()                    # Stop accepting new requests
+await pool.drain(timeout=30)    # Wait for in-flight to finish
+```
+
+### Monitoring with Events
+
+```python
+from purreal import PoolEvent
+
+pool.events.on(PoolEvent.TIMEOUT, lambda ctx: metrics.inc("pool.timeouts"))
+pool.events.on(PoolEvent.SCALE_UP, lambda ctx: logger.info("Pool grew"))
+pool.events.on(PoolEvent.TELEPORT, lambda ctx: logger.warn(f"Session teleported: {ctx.metadata}"))
+pool.events.on(PoolEvent.HEALTH_FAIL, lambda ctx: pagerduty.alert(ctx.connection_id))
+```
+
+### Session Variables (LET)
+
+```python
+session = await mux.get_session("app", "prod", creds)
+await session.let("user_id", "user:alice")
+await session.query("SELECT * FROM orders WHERE author = $user_id")
+```
+
+---
+
+## Configuration Guide
+
+### Pool Sizing
+
+| Workload | `pool_size` | `max_overflow` | Notes |
+|----------|-------------|----------------|-------|
+| Low traffic (< 10 req/s) | 2-3 | 5 | Minimal resources |
+| Medium (10-100 req/s) | 5-10 | 15 | Good balance |
+| High (100-1000 req/s) | 10-20 | 30 | Production standard |
+| Extreme (1000+ req/s) | 20-50 | 50 | Use multiplexer too |
+
+### Multiplexer Sizing
+
+| Scenario | `num_slots` | `max_sessions` |
+|----------|-------------|----------------|
+| Single-tenant app | 2-3 | 50 |
+| Multi-tenant SaaS | 5-10 | 500 |
+| Microservice with many DBs | 3-5 per DB | 200 |
+
+---
 
 ## Troubleshooting
 
-### `ConcurrencyError: cannot call recv`
-**Cause:** Sharing a connection between coroutines  
-**Solution:** Always use `async with pool.acquire()` - never store or share the connection object
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `ConcurrencyError` | Sharing connection between coroutines | Always use `async with pool.acquire()` |
+| `TimeoutError` on acquire | Pool exhausted | Increase `pool_size` or `max_overflow` |
+| `PoolExhaustedError` | Too many tasks waiting | Increase `max_waiters` or add backpressure upstream |
+| `PoolPausedError` | Pool is draining | Wait for `resume()` or deployment to complete |
+| `SessionExpiredError` | Session idle too long | Reduce `session_idle_timeout` or keep sessions active |
+| LEAK warnings in logs | Connection held > threshold | Check your code for missing `async with` or long operations |
+| Frequent connection churn | `max_lifetime` too low | Increase to 1800+ seconds |
 
-### `asyncio.TimeoutError` during acquisition
-**Cause:** Pool exhausted (all connections in use)  
-**Solutions:**
-- Increase `max_connections`
-- Increase `acquisition_timeout`
-- Reduce query execution time
-- Check for connection leaks (not releasing connections)
-
-### Connections failing health checks
-**Cause:** Network issues, database restart, or connection timeout  
-**Solution:** Purreal auto-replaces unhealthy connections. Check logs for patterns:
+Enable debug logging:
 ```python
-# Enable debug logging to diagnose
-logging.getLogger('purreal').setLevel(logging.DEBUG)
+import logging
+logging.getLogger("purreal").setLevel(logging.DEBUG)
 ```
 
-### Memory usage growing
-**Cause:** Connections not being released  
-**Solution:** Verify all `pool.acquire()` uses are in `async with` blocks
+---
 
-## Performance Tips
+## Development
 
-### Pool Sizing
-```python
-# Calculate based on your workload
-concurrent_requests = 100  # Peak concurrent users
-avg_query_time = 0.1       # Average query time in seconds
-connections_needed = concurrent_requests * avg_query_time
-
-pool = SurrealDBConnectionPool(
-    min_connections=int(connections_needed * 0.5),  # 50% for baseline
-    max_connections=int(connections_needed * 2),    # 200% for peaks
-)
-```
-
-### Connection Lifecycle
-```python
-# Tune based on your database workload
-pool = SurrealDBConnectionPool(
-    max_usage_count=10000,      # Higher for read-heavy workloads
-    max_idle_time=600,          # Longer for stable connections
-    health_check_interval=60,   # More frequent for critical apps
-)
-```
-
-### Monitoring
-```python
-# Periodically check pool health
-async def monitor_pool(pool):
-    while True:
-        stats = await pool.get_stats()
-        if stats['acquisition_timeouts'] > 10:
-            logger.warning(f"High timeout rate: {stats}")
-        if stats['in_use_connections'] / stats['current_connections'] > 0.8:
-            logger.warning("Pool utilization above 80%")
-        await asyncio.sleep(60)
-
-asyncio.create_task(monitor_pool(pool))
-```
-
-## Known Limitations
-
-### Burst Load > max_connections
-
-**Issue:** When burst traffic exceeds `max_connections`, waiting tasks may timeout instead of queuing properly.
-
-**Example:**
-- Pool: `max_connections=50`
-- Burst: 100 concurrent requests
-- Result: 50 succeed, 50 timeout (instead of queuing)
-
-**Workaround:**
-```python
-# Size pool for peak burst load
-pool = SurrealDBConnectionPool(
-    max_connections=150,  # 1.5x expected peak
-    ...
-)
-
-# Or use semaphore to limit concurrency
-semaphore = asyncio.Semaphore(50)
-
-async def limited_query():
-    async with semaphore:
-        async with pool.acquire() as conn:
-            await conn.query(...)
-```
-
-**Status:** Known issue in v0.1.0. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for details.
-
-**Impact:** Sustained load and gradual ramp-up work fine. Only affects sudden bursts >> pool size.
-
-## Contributing
-
-We welcome contributions! Please feel free to submit a Pull Request.
-
-### Guidelines
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Write tests for your changes (`pytest tests/`)
-5. Ensure all tests pass (`pytest`)
-6. Submit a pull request
-
-### Development Setup
 ```bash
 git clone https://github.com/dyleeeeeeee/purreal.git
 cd purreal
 pip install -e ".[dev]"
-pytest
+pytest                    # 69 tests
+python -m build           # Build wheel
 ```
+
+---
 
 ## License
 
-This project is licensed under the GNU General Public License v3 (GPLv3) - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Solves the critical `ConcurrencyError` issue affecting SurrealDB Python applications
-- Built for production use in high-concurrency async applications
-- Thanks to the SurrealDB team for an excellent database
+GPL-3.0. See [LICENSE](LICENSE).
