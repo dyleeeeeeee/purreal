@@ -32,10 +32,9 @@ class DemandPredictor:
 		idx = self._bucket_index()
 		self._ring[idx] += 1
 		now = time.monotonic()
-		dt = now - self._last_tick
-		if dt > 0:
-			rate = 1.0 / dt
-			self._ewma = self._alpha * rate + (1 - self._alpha) * self._ewma
+		dt = max(now - self._last_tick, 1e-6)
+		rate = 1.0 / dt
+		self._ewma = self._alpha * rate + (1 - self._alpha) * self._ewma
 		self._last_tick = now
 
 	def predict_demand(self, horizon_seconds: float = 10.0) -> int:

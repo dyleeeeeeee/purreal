@@ -193,10 +193,21 @@ class TestPrePing:
 		)
 		await pool.initialize()
 
-		# First acquire should trigger validation
+		# First acquire returns a freshly-created connection (bypass doesn't apply
+		# because idle_duration == 0 and bypass_window == 0.0, so > check is false).
+		# We need to acquire, release, then re-acquire to get pre-ping to fire.
 		async with pool.acquire():
 			pass
 
+		mock_surreal_connection.query.reset_mock()
+		# Force the connection to appear stale by manipulating last_used
+		for conn in pool._all_connections:
+			conn.last_used = conn.last_used - 1.0  # Make idle_duration > 0
+
+		async with pool.acquire():
+			pass
+
+		# Pre-ping should have called query (INFO FOR DB) for validation
 		assert mock_surreal_connection.query.called
 		await pool.close()
 
