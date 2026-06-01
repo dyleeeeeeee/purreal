@@ -11,7 +11,7 @@ from .pooler import (
     SurrealDBPoolManager,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.1.3"
 __all__ = [
     "SurrealDBConnectionPool",
     "PooledConnection",

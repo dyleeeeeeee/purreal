@@ -34,20 +34,6 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "slow: Slow-running tests")
 
 
-@pytest.fixture(scope="session")
-def event_loop_policy():
-    """Set the event loop policy for all async tests."""
-    return asyncio.get_event_loop_policy()
-
-
-@pytest.fixture(scope="function")
-def event_loop():
-    """Create an event loop for each test function."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
 # ============================================================================
 # Cleanup Hooks
 # ============================================================================
@@ -56,12 +42,12 @@ def event_loop():
 async def cleanup_tasks():
     """Clean up any lingering async tasks after each test."""
     yield
-    
-    # Cancel any pending tasks
-    tasks = [t for t in asyncio.all_tasks() if not t.done()]
+
+    current = asyncio.current_task()
+    tasks = [t for t in asyncio.all_tasks() if not t.done() and t is not current]
     for task in tasks:
         task.cancel()
         try:
             await task
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, Exception):
             pass

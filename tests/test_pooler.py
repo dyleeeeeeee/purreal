@@ -59,17 +59,16 @@ def pool_config():
 async def mock_pool(pool_config, mock_surreal_connection):
     """Create a pool with mocked connection creation."""
     pool = SurrealDBConnectionPool(**pool_config)
-    
-    # Mock connection creation
-    async def mock_create():
-        return PooledConnection(connection=mock_surreal_connection)
-    
-    pool._create_connection = AsyncMock(side_effect=mock_create)
-    
+
+    # Each call returns a NEW PooledConnection wrapping the same mock connection
+    pool._create_connection = AsyncMock(
+        side_effect=lambda: PooledConnection(connection=mock_surreal_connection)
+    )
+
     await pool.initialize()
-    
+
     yield pool
-    
+
     # Cleanup
     if not pool._closed:
         await pool.close()

@@ -55,8 +55,8 @@ SurrealConnectionType = Union[AsyncWsSurrealConnection, AsyncHttpSurrealConnecti
 class PooledConnection:
     """Internal wrapper holding a connection and its pool metadata."""
     connection: SurrealConnectionType
-    created_at: float = field(default_factory=time.time)
-    last_used: float = field(default_factory=time.time)
+    created_at: float = field(default_factory=time.monotonic)
+    last_used: float = field(default_factory=time.monotonic)
     in_use: bool = False # <-- Crucial for exclusivity
     usage_count: int = 0
     id: str = field(default_factory=lambda: f"conn_{uuid.uuid4().hex[:8]}")
@@ -75,7 +75,7 @@ class PooledConnection:
         else:
             logger.debug(f"POOL DEBUG: Conn {self.id} (obj: {id(self.connection)}) marked USED by task {task_name}.")
         self.in_use = True
-        self.last_used = time.time()
+        self.last_used = time.monotonic()
         self.usage_count += 1
         self.acquired_by_task = current_task
 
@@ -329,7 +329,7 @@ class SurrealDBConnectionPool:
             if pooled_conn:
                 # Connection was successfully acquired and yielded
                 logger.debug(f"POOL DEBUG: Task {task_name} releasing conn {conn_id_str} (obj: {conn_obj_id_str})")
-                await self._release_connection(pooled_conn)
+                await asyncio.shield(self._release_connection(pooled_conn))
             else:
                 # Acquisition failed (timeout or error before yield), nothing to release
                 logger.debug(f"POOL DEBUG: Task {task_name} exiting acquire context without a connection to release.")
@@ -393,6 +393,7 @@ class SurrealDBConnectionPool:
         task_name = current_task.get_name() if current_task else "UnknownTask"
 
         while True: # Loop until connection obtained or caller times out
+            waiter = None
             # --- Try finding existing connection (under lock) ---
             async with self._lock:
                 # logger.debug(f"POOL DEBUG: Task {task_name} entered acquire lock. Pool: {len(self._pool)}, Waiters: {len(self._connection_waiters)}")
@@ -409,18 +410,22 @@ class SurrealDBConnectionPool:
                     logger.debug(f"POOL DEBUG: Task {task_name} found no free conn, will create new. Pool size {len(self._pool)} < {self.max_connections}.")
                     # Exit lock block to create connection below
                 else:
-                    # --- Pool is full, wait (under lock to add waiter) ---
+                    # --- Pool is full, register waiter under lock then wait outside ---
                     logger.debug(f"POOL DEBUG: Task {task_name} found no free conn and pool full ({len(self._pool)}). Waiting...")
                     waiter = asyncio.Future()
                     self._connection_waiters.append(waiter)
-                    # Update peak waiters stat while holding lock
                     self._stats["peak_waiters"] = max(self._stats["peak_waiters"], len(self._connection_waiters))
-                    # logger.debug(f"POOL DEBUG: Task {task_name} added waiter, exiting lock to wait.")
-                    # Exit lock block before waiting
-                    await waiter # Wait outside the lock
-                    logger.debug(f"POOL DEBUG: Task {task_name} woken up, retrying acquisition.")
-                    # Loop again to re-enter lock and check pool state
-                    continue
+
+            # await waiter OUTSIDE the lock to avoid deadlock with _release_connection
+            if waiter is not None:
+                try:
+                    await waiter
+                except RuntimeError:
+                    raise
+                finally:
+                    waiter = None
+                logger.debug(f"POOL DEBUG: Task {task_name} woken up, retrying acquisition.")
+                continue
 
             # --- Create connection (outside the lock) ---
             # This block is reached only if we exited the lock because pool size < max_connections
@@ -707,7 +712,7 @@ class SurrealDBConnectionPool:
                 async with self._lock:
                      if self._closed: break # Re-check after potentially long health checks
 
-                     current_time = time.time()
+                     current_time = time.monotonic()
                      initial_pool_size = len(self._pool)
                      num_to_close = 0
                      temp_pool = [] # Build the next state of the pool
