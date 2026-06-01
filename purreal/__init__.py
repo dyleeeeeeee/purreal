@@ -1,19 +1,42 @@
 """
-Purreal - Production-grade async connection pooler for SurrealDB.
+Purreal - Year-3050 async connection pooler and session multiplexer for SurrealDB.
 
-Provides exclusive connection leasing and sophisticated lifecycle management
-to prevent ConcurrencyError issues in high-concurrency Python applications.
+Features:
+- Adaptive pool with predictive pre-warming and self-tuning topology
+- Session multiplexer with transparent teleportation across physical connections
+- Circuit breakers, leak detection, graceful drain, bounded waiters
 """
 
-from .pooler import (
-    SurrealDBConnectionPool,
-    PooledConnection,
-    SurrealDBPoolManager,
+from .types import (
+	PoolConfig,
+	PooledConnection,
+	PoolEvent,
+	PoolExhaustedError,
+	PoolPausedError,
+	PoolStats,
+	SessionExpiredError,
 )
+from .events import EventBus
+from .pool import SurrealDBConnectionPool, SurrealDBPoolManager
+from .multiplexer import SessionMultiplexer, VirtualSession
+from .predictive import DemandPredictor, LatencyOracle, CircuitBreaker, AdaptiveScaler
 
-__version__ = "0.1.3"
+__version__ = "0.2.0"
 __all__ = [
-    "SurrealDBConnectionPool",
-    "PooledConnection",
-    "SurrealDBPoolManager",
+	"SurrealDBConnectionPool",
+	"SurrealDBPoolManager",
+	"PooledConnection",
+	"PoolConfig",
+	"PoolEvent",
+	"PoolExhaustedError",
+	"PoolPausedError",
+	"PoolStats",
+	"SessionExpiredError",
+	"EventBus",
+	"SessionMultiplexer",
+	"VirtualSession",
+	"DemandPredictor",
+	"LatencyOracle",
+	"CircuitBreaker",
+	"AdaptiveScaler",
 ]
