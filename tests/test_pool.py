@@ -8,6 +8,7 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 from purreal.pool import SurrealDBConnectionPool, SurrealDBPoolManager
+from purreal.predictive import DemandPredictor, LatencyOracle
 from purreal.types import PooledConnection, PoolConfig, PoolExhaustedError, PoolPausedError
 
 
@@ -353,6 +354,62 @@ class TestPoolManager:
 			with pytest.raises(ValueError):
 				await manager.create_pool("dup_test", **pool_config)
 		await manager.close_all_pools()
+
+
+class TestSpeculativeGrowth:
+	"""Regression: idle pools must not churn speculative connections."""
+
+	@pytest.mark.asyncio
+	async def test_zero_demand_no_prewarm(self, pool_config, mock_surreal_connection):
+		# Default config (prewarm=True): with no acquisitions the demand-bounded
+		# heuristic must forecast ~0, so the pool stays at min_idle and never
+		# pre-warms toward max_connections.
+		pool = SurrealDBConnectionPool(**pool_config)
+		pool._create_connection = AsyncMock(
+			side_effect=lambda overflow=False: PooledConnection(
+				connection=mock_surreal_connection, overflow=overflow,
+			)
+		)
+		await pool.initialize()
+		min_idle = pool._config.min_idle
+
+		for _ in range(20):
+			await pool._run_housekeeping()
+
+		stats = await pool.get_stats()
+		assert stats["total_pre_warms"] == 0
+		assert stats["current_connections"] == min_idle
+		await pool.close()
+
+	@pytest.mark.asyncio
+	async def test_optout_suppresses_growth_despite_forecast(
+		self, pool_config, mock_surreal_connection,
+	):
+		# With prewarm=False and adaptive=False the pool is strictly
+		# demand-driven: even a forecast and latency forced sky-high must not
+		# pre-warm or scale up.
+		pool_config["prewarm"] = False
+		pool_config["adaptive"] = False
+		pool = SurrealDBConnectionPool(**pool_config)
+		pool._create_connection = AsyncMock(
+			side_effect=lambda overflow=False: PooledConnection(
+				connection=mock_surreal_connection, overflow=overflow,
+			)
+		)
+		await pool.initialize()
+		min_idle = pool._config.min_idle
+
+		# Force both speculative signals to their extreme; the opt-out must
+		# suppress growth regardless of what the forecast says.
+		with patch.object(DemandPredictor, "predict_demand", return_value=9999), \
+				patch.object(LatencyOracle, "pool_p95", return_value=9999.0):
+			for _ in range(20):
+				await pool._run_housekeeping()
+
+		stats = await pool.get_stats()
+		assert stats["total_pre_warms"] == 0
+		assert stats["current_connections"] == min_idle
+		await pool.close()
 
 
 class TestPerformance:

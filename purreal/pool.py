@@ -51,6 +51,8 @@ class SurrealDBConnectionPool:
 		max_overflow: Optional[int] = None,
 		pre_ping: bool = True,
 		pre_ping_bypass_window: Optional[float] = None,
+		prewarm: bool = True,
+		adaptive: bool = True,
 		max_lifetime: Optional[float] = None,
 		leak_detection_threshold: Optional[float] = None,
 		max_waiters: Optional[int] = None,
@@ -80,6 +82,8 @@ class SurrealDBConnectionPool:
 				connection_retry_delay=connection_retry_delay or 1.0,
 				pre_ping=pre_ping,
 				pre_ping_bypass_window=pre_ping_bypass_window if pre_ping_bypass_window is not None else 1.0,
+				prewarm=prewarm,
+				adaptive=adaptive,
 				leak_detection_threshold=leak_detection_threshold or 60.0,
 				max_waiters=max_waiters or 100,
 				schema_file=schema_file,
@@ -530,57 +534,62 @@ class SurrealDBConnectionPool:
 				await asyncio.sleep(1)
 
 	async def _run_housekeeping(self) -> None:
-		# Adaptive scaling
-		p95 = self._oracle.pool_p95()
 		idle = self._idle_queue.qsize()
 		size = len(self._all_connections)
-		decision = self._scaler.decide(p95, size, idle)
 
-		if decision > 0:
-			try:
-				conn = await self._create_connection()
-				async with self._lock:
-					self._all_connections.add(conn)
-				self._idle_queue.put_nowait(conn)
-				self._breakers[conn.id] = CircuitBreaker()
-				self._stats.current_size = len(self._all_connections)
-				await self.events.emit(EventContext(
-					event=PoolEvent.SCALE_UP, timestamp=time.monotonic(),
-					connection_id=conn.id,
-				))
-			except Exception as e:
-				logger.warning(f"Scale-up failed: {e}")
-		elif decision < 0 and idle > self._config.min_idle:
-			try:
-				conn = self._idle_queue.get_nowait()
-				await self._destroy_connection(conn)
-				self._semaphore.release()
-				await self.events.emit(EventContext(
-					event=PoolEvent.SCALE_DOWN, timestamp=time.monotonic(),
-					connection_id=conn.id,
-				))
-			except asyncio.QueueEmpty:
-				pass
+		# Adaptive scaling (latency-driven). Disabled with adaptive=False.
+		if self._config.adaptive:
+			p95 = self._oracle.pool_p95()
+			decision = self._scaler.decide(p95, size, idle)
 
-		# Predictive pre-warming
-		predicted = self._predictor.predict_demand(horizon_seconds=10.0)
-		deficit = predicted - idle
-		if deficit > 0 and size < self._config.max_connections:
-			to_create = min(deficit, self._config.max_connections - size, 3)
-			for _ in range(to_create):
+			if decision > 0:
 				try:
 					conn = await self._create_connection()
 					async with self._lock:
 						self._all_connections.add(conn)
 					self._idle_queue.put_nowait(conn)
 					self._breakers[conn.id] = CircuitBreaker()
-					self._stats.total_pre_warms += 1
+					self._stats.current_size = len(self._all_connections)
 					await self.events.emit(EventContext(
-						event=PoolEvent.PRE_WARM, timestamp=time.monotonic(),
+						event=PoolEvent.SCALE_UP, timestamp=time.monotonic(),
 						connection_id=conn.id,
 					))
-				except Exception:
-					break
+				except Exception as e:
+					logger.warning(f"Scale-up failed: {e}")
+			elif decision < 0 and idle > self._config.min_idle:
+				try:
+					conn = self._idle_queue.get_nowait()
+					await self._destroy_connection(conn)
+					self._semaphore.release()
+					await self.events.emit(EventContext(
+						event=PoolEvent.SCALE_DOWN, timestamp=time.monotonic(),
+						connection_id=conn.id,
+					))
+				except asyncio.QueueEmpty:
+					pass
+
+		# Predictive pre-warming. Disabled with prewarm=False. The forecast is
+		# bounded by recent demand, so a near-idle pool pre-warms ~0 (see
+		# DemandPredictor.predict_demand).
+		if self._config.prewarm:
+			predicted = self._predictor.predict_demand(horizon_seconds=10.0)
+			deficit = predicted - idle
+			if deficit > 0 and size < self._config.max_connections:
+				to_create = min(deficit, self._config.max_connections - size, 3)
+				for _ in range(to_create):
+					try:
+						conn = await self._create_connection()
+						async with self._lock:
+							self._all_connections.add(conn)
+						self._idle_queue.put_nowait(conn)
+						self._breakers[conn.id] = CircuitBreaker()
+						self._stats.total_pre_warms += 1
+						await self.events.emit(EventContext(
+							event=PoolEvent.PRE_WARM, timestamp=time.monotonic(),
+							connection_id=conn.id,
+						))
+					except Exception:
+						break
 
 		# Evict idle beyond min_idle that exceed idle timeout
 		evicted = 0

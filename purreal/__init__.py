@@ -21,7 +21,7 @@ from .pool import SurrealDBConnectionPool, SurrealDBPoolManager
 from .multiplexer import SessionMultiplexer, VirtualSession
 from .predictive import DemandPredictor, LatencyOracle, CircuitBreaker, AdaptiveScaler
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
 	"SurrealDBConnectionPool",
 	"SurrealDBPoolManager",

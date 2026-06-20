@@ -14,6 +14,7 @@ class DemandPredictor:
 
 	BUCKET_SIZE = 5.0  # seconds per bucket
 	BUCKETS_PER_DAY = 17280  # 86400 / 5
+	EWMA_IDLE_TAU = 60.0  # seconds; EWMA decays toward zero after this long idle
 
 	__slots__ = ("_ring", "_ewma", "_alpha", "_last_tick")
 
@@ -38,7 +39,13 @@ class DemandPredictor:
 		self._last_tick = now
 
 	def predict_demand(self, horizon_seconds: float = 10.0) -> int:
-		"""Predict how many connections will be needed in the next `horizon` seconds."""
+		"""Predict how many connections will be needed in the next `horizon` seconds.
+
+		The EWMA term is aged toward zero by the time elapsed since the last
+		acquisition. Without this a stale demand burst pins the forecast high
+		while the pool sits idle, which drives runaway speculative pre-warming
+		(the pool warms to its ceiling, reaps idle connections, re-warms).
+		"""
 		# Historical pattern: average of next N buckets
 		buckets_ahead = max(1, int(horizon_seconds / self.BUCKET_SIZE))
 		historical = 0.0
@@ -47,11 +54,15 @@ class DemandPredictor:
 			historical += self._ring[idx]
 		historical_rate = historical / buckets_ahead
 
-		# EWMA-based prediction
-		ewma_prediction = self._ewma * horizon_seconds
+		# EWMA-based prediction, decayed by idle time since the last acquisition.
+		idle_for = max(time.monotonic() - self._last_tick, 0.0)
+		decayed_ewma = self._ewma * math.exp(-idle_for / self.EWMA_IDLE_TAU)
+		ewma_prediction = decayed_ewma * horizon_seconds
 
-		# Take the higher of the two signals
-		return max(int(math.ceil(historical_rate)), int(math.ceil(ewma_prediction)))
+		# Round to nearest connection (not ceil): expected demand below 0.5
+		# warms nothing, so a near-idle pool pre-warms ~0 instead of rounding
+		# every fraction up to 1.
+		return max(int(historical_rate + 0.5), int(ewma_prediction + 0.5))
 
 	def decay(self, factor: float = 0.95) -> None:
 		"""Decay historical data to adapt to changing patterns."""

@@ -100,6 +100,8 @@ class PoolConfig:
 	connection_retry_delay: float = 1.0
 	pre_ping: bool = True
 	pre_ping_bypass_window: float = 1.0
+	prewarm: bool = True
+	adaptive: bool = True
 	leak_detection_threshold: float = 60.0
 	max_waiters: int = 100
 	max_lifetime_jitter: float = 0.025

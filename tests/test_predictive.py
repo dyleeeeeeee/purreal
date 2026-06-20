@@ -39,6 +39,18 @@ class TestDemandPredictor:
 		p.decay(0.5)
 		assert p._ring[0] == 50.0
 
+	def test_ewma_decays_when_idle(self):
+		# A burst (~20 acquisitions/s) drives the forecast up...
+		p = DemandPredictor(alpha=0.5)
+		for _ in range(20):
+			p.record_acquisition()
+			p._last_tick -= 0.05  # space arrivals ~50ms apart
+		assert p.predict_demand(10.0) > 0
+		# ...but once the pool sits idle, a stale burst must not keep the
+		# forecast pinned high (this drove the pre-warm/reap/warm churn).
+		p._last_tick -= 600.0  # simulate 10 minutes with no acquisitions
+		assert p.predict_demand(10.0) == 0
+
 
 class TestLatencyOracle:
 	def test_empty_not_degraded(self):

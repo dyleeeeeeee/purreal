@@ -121,6 +121,8 @@ pool = SurrealDBConnectionPool(
     health_check_interval=30.0,
     pre_ping=True,            # Validate stale connections on acquire (default: True)
     pre_ping_bypass_window=1.0,  # Skip validation if used within N seconds
+    prewarm=True,             # Predictive pre-warming before demand spikes (default: True)
+    adaptive=True,            # Latency-driven adaptive scaling (default: True)
     leak_detection_threshold=60.0,  # Warn if held longer than N seconds
     max_waiters=100,          # Reject if more than N tasks waiting
     connection_retry_attempts=3,
@@ -328,6 +330,30 @@ predictor.decay(factor=0.95)            # Age historical data
 ```
 
 Used internally by the pool's housekeeping loop. Exposed for custom scheduling logic.
+
+The forecast is bounded by **recent** demand: the EWMA term decays toward zero as
+the pool sits idle, so a pool seeing ~0 acquisitions pre-warms ~0 connections
+rather than warming toward `max_connections`.
+
+#### Disabling speculative growth
+
+Both background growth strategies are opt-out via the pool constructor / `PoolConfig`:
+
+| Flag | Default | What it controls |
+|------|---------|------------------|
+| `prewarm` | `True` | Predictive pre-warming (`DemandPredictor`-driven) ahead of demand spikes |
+| `adaptive` | `True` | Latency-driven adaptive scaling (`AdaptiveScaler`, `LatencyOracle`-driven) |
+
+```python
+# Strictly demand-driven (0.1.x-style): grow only under acquire pressure,
+# shrink idle connections back to min_idle, never pre-warm or scale on latency.
+pool = SurrealDBConnectionPool(..., prewarm=False, adaptive=False)
+```
+
+Use this for pools that idle for long stretches and serve occasional bursts, or
+when many pools share one SurrealDB node and background connection churn matters
+more than shaving acquire latency off the first request of a spike. `pre_ping`,
+circuit breakers, leak detection, and the multiplexer are unaffected.
 
 ---
 
