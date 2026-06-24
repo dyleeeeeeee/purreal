@@ -2,18 +2,16 @@
 """Test suite for purreal session multiplexer with teleportation."""
 
 import asyncio
-import time
 
 import pytest
 from unittest.mock import AsyncMock
 
 from purreal.pool import SurrealDBConnectionPool
-from purreal.multiplexer import SessionMultiplexer, VirtualSession, PhysicalSlot
+from purreal.multiplexer import SessionMultiplexer, VirtualSession
 from purreal.types import (
     PooledConnection,
     SessionState,
     SessionExpiredError,
-    SlotHealth,
 )
 
 
@@ -154,7 +152,6 @@ class TestTeleportation:
         self, mock_pool, mock_surreal_connection
     ):
         call_count = [0]
-        original_query = mock_surreal_connection.query
 
         async def failing_query(*args, **kwargs):
             call_count[0] += 1

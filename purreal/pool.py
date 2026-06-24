@@ -4,7 +4,6 @@ import asyncio
 import logging
 import random
 import time
-import traceback
 from collections import deque
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Optional
@@ -12,7 +11,6 @@ from typing import Any, AsyncGenerator, Optional
 from surrealdb import AsyncSurreal
 
 from .types import (
-    ConnectionState,
     EventContext,
     PoolConfig,
     PooledConnection,

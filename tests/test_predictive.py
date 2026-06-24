@@ -2,7 +2,6 @@
 """Test suite for predictive pre-warming, latency oracle, circuit breaker."""
 
 import time
-import pytest
 
 from purreal.predictive import (
     AdaptiveScaler,

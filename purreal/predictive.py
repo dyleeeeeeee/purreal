@@ -4,7 +4,6 @@ import math
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional
 
 from .types import CircuitState
 

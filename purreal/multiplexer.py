@@ -4,7 +4,6 @@ import asyncio
 import logging
 import time
 import uuid
-from collections import deque
 from typing import Any, Optional
 
 from .types import (
@@ -463,7 +462,6 @@ class SessionMultiplexer:
                 await asyncio.sleep(30)
                 if self._closed:
                     break
-                now = time.monotonic()
                 expired = [
                     s
                     for s in self._sessions.values()

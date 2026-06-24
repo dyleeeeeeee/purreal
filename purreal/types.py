@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Awaitable, Callable, Optional, Union
 
-from surrealdb import AsyncSurreal, AsyncWsSurrealConnection, AsyncHttpSurrealConnection
+from surrealdb import AsyncWsSurrealConnection, AsyncHttpSurrealConnection
 
 SurrealConnectionType = Union[AsyncWsSurrealConnection, AsyncHttpSurrealConnection]
 EventHandler = Callable[["EventContext"], Union[Awaitable[None], None]]

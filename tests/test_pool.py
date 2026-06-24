@@ -11,7 +11,6 @@ from purreal.pool import SurrealDBConnectionPool, SurrealDBPoolManager
 from purreal.predictive import DemandPredictor, LatencyOracle
 from purreal.types import (
     PooledConnection,
-    PoolConfig,
     PoolExhaustedError,
     PoolPausedError,
 )
